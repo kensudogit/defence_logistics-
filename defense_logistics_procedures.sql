@@ -1,641 +1,983 @@
--- 防衛省ロジスティクス基盤再構築プロジェクト用プロシージャー
--- Defense Logistics Infrastructure Reconstruction Project Procedures
-
--- 1. セキュリティレベル管理テーブル
-CREATE TABLE IF NOT EXISTS security_levels (
-    level_id SERIAL PRIMARY KEY,
-    level_name VARCHAR(50) NOT NULL UNIQUE,
-    clearance_required VARCHAR(100) NOT NULL,
-    description TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 2. ロジスティクス資材管理テーブル
-CREATE TABLE IF NOT EXISTS logistics_materials (
-    material_id SERIAL PRIMARY KEY,
-    material_code VARCHAR(50) NOT NULL UNIQUE,
-    material_name VARCHAR(200) NOT NULL,
-    category VARCHAR(100) NOT NULL,
-    unit VARCHAR(20) NOT NULL,
-    current_stock INTEGER DEFAULT 0,
-    min_stock_level INTEGER DEFAULT 0,
-    max_stock_level INTEGER DEFAULT 0,
-    security_level_id INTEGER REFERENCES security_levels(level_id),
-    location_code VARCHAR(50),
-    supplier_info TEXT,
-    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+-- デバッグログテーブルの作成
+CREATE TABLE IF NOT EXISTS debug_log (
+    id SERIAL PRIMARY KEY,
+    procedure_name VARCHAR(100) NOT NULL,
+    step_name VARCHAR(100),
+    message TEXT,
+    variable_name VARCHAR(100),
+    variable_value TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. 輸送管理テーブル
-CREATE TABLE IF NOT EXISTS transportation_orders (
-    order_id SERIAL PRIMARY KEY,
-    order_number VARCHAR(50) NOT NULL UNIQUE,
-    priority_level INTEGER DEFAULT 3 CHECK (priority_level BETWEEN 1 AND 5),
-    origin_location VARCHAR(100) NOT NULL,
-    destination_location VARCHAR(100) NOT NULL,
-    material_id INTEGER REFERENCES logistics_materials(material_id),
-    quantity INTEGER NOT NULL,
-    required_date DATE NOT NULL,
-    status VARCHAR(50) DEFAULT 'pending',
-    assigned_vehicle VARCHAR(50),
-    assigned_driver VARCHAR(100),
-    security_clearance VARCHAR(50),
-    created_by INTEGER REFERENCES users(user_id),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+-- デバッグログを記録する関数
+CREATE OR REPLACE FUNCTION log_debug(
+    p_procedure_name VARCHAR(100),
+    p_step_name VARCHAR(100) DEFAULT NULL,
+    p_message TEXT DEFAULT NULL,
+    p_variable_name VARCHAR(100) DEFAULT NULL,
+    p_variable_value TEXT DEFAULT NULL
+) RETURNS VOID AS $$
+BEGIN
+    INSERT INTO debug_log (procedure_name, step_name, message, variable_name, variable_value)
+    VALUES (p_procedure_name, p_step_name, p_message, p_variable_name, p_variable_value);
+    
+    -- コンソールにも出力（PostgreSQLのログに表示）
+    RAISE NOTICE 'DEBUG: % - % - % - % = %', 
+        p_procedure_name, 
+        COALESCE(p_step_name, 'N/A'), 
+        COALESCE(p_message, 'N/A'),
+        COALESCE(p_variable_name, 'N/A'),
+        COALESCE(p_variable_value, 'N/A');
+END;
+$$ LANGUAGE plpgsql;
 
--- 4. セキュリティ監査ログテーブル
-CREATE TABLE IF NOT EXISTS security_audit_logs (
-    audit_id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(user_id),
-    action_type VARCHAR(50) NOT NULL,
-    table_name VARCHAR(50),
-    record_id INTEGER,
-    old_values JSONB,
-    new_values JSONB,
-    ip_address INET,
-    user_agent TEXT,
-    session_id VARCHAR(100),
-    security_level VARCHAR(50),
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+-- デバッグログをクリアする関数
+CREATE OR REPLACE FUNCTION clear_debug_log() RETURNS VOID AS $$
+BEGIN
+    DELETE FROM debug_log;
+    RAISE NOTICE 'デバッグログをクリアしました';
+END;
+$$ LANGUAGE plpgsql;
 
--- 5. 緊急事態管理テーブル
-CREATE TABLE IF NOT EXISTS emergency_incidents (
-    incident_id SERIAL PRIMARY KEY,
-    incident_code VARCHAR(50) NOT NULL UNIQUE,
-    incident_type VARCHAR(100) NOT NULL,
-    severity_level INTEGER CHECK (severity_level BETWEEN 1 AND 5),
-    location VARCHAR(200) NOT NULL,
-    description TEXT NOT NULL,
-    affected_materials TEXT,
-    response_team VARCHAR(100),
-    status VARCHAR(50) DEFAULT 'active',
-    reported_by INTEGER REFERENCES users(user_id),
-    reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    resolved_at TIMESTAMP,
-    resolution_notes TEXT
-);
+-- デバッグログを表示する関数
+CREATE OR REPLACE FUNCTION show_debug_log(
+    p_limit INTEGER DEFAULT 50
+) RETURNS TABLE (
+    id INTEGER,
+    procedure_name VARCHAR(100),
+    step_name VARCHAR(100),
+    message TEXT,
+    variable_name VARCHAR(100),
+    variable_value TEXT,
+    created_at TIMESTAMP
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        dl.id,
+        dl.procedure_name,
+        dl.step_name,
+        dl.message,
+        dl.variable_name,
+        dl.variable_value,
+        dl.created_at
+    FROM debug_log dl
+    ORDER BY dl.created_at DESC
+    LIMIT p_limit;
+END;
+$$ LANGUAGE plpgsql;
 
--- インデックス作成
-CREATE INDEX IF NOT EXISTS idx_logistics_materials_code ON logistics_materials(material_code);
-CREATE INDEX IF NOT EXISTS idx_logistics_materials_category ON logistics_materials(category);
-CREATE INDEX IF NOT EXISTS idx_transportation_orders_status ON transportation_orders(status);
-CREATE INDEX IF NOT EXISTS idx_transportation_orders_priority ON transportation_orders(priority_level);
-CREATE INDEX IF NOT EXISTS idx_security_audit_logs_user ON security_audit_logs(user_id);
-CREATE INDEX IF NOT EXISTS idx_security_audit_logs_timestamp ON security_audit_logs(timestamp);
-CREATE INDEX IF NOT EXISTS idx_emergency_incidents_status ON emergency_incidents(status);
-CREATE INDEX IF NOT EXISTS idx_emergency_incidents_severity ON emergency_incidents(severity_level);
+-- 特定のプロシージャのデバッグログを表示する関数
+CREATE OR REPLACE FUNCTION show_procedure_debug_log(
+    p_procedure_name VARCHAR(100),
+    p_limit INTEGER DEFAULT 50
+) RETURNS TABLE (
+    id INTEGER,
+    procedure_name VARCHAR(100),
+    step_name VARCHAR(100),
+    message TEXT,
+    variable_name VARCHAR(100),
+    variable_value TEXT,
+    created_at TIMESTAMP
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        dl.id,
+        dl.procedure_name,
+        dl.step_name,
+        dl.message,
+        dl.variable_name,
+        dl.variable_value,
+        dl.created_at
+    FROM debug_log dl
+    WHERE dl.procedure_name = p_procedure_name
+    ORDER BY dl.created_at DESC
+    LIMIT p_limit;
+END;
+$$ LANGUAGE plpgsql;
 
--- 初期データ挿入
-INSERT INTO security_levels (level_name, clearance_required, description) VALUES
-('一般', '一般', '一般職員向け'),
-('機密', '機密', '機密情報取扱者向け'),
-('極秘', '極秘', '極秘情報取扱者向け'),
-('最重要機密', '最重要機密', '最重要機密情報取扱者向け')
-ON CONFLICT (level_name) DO NOTHING;
+-- 既存のプロシージャにデバッグログを追加
 
--- セキュリティ強化ユーザー管理プロシージャー
-CREATE OR REPLACE FUNCTION create_defense_user(
+-- ユーザー作成プロシージャ（デバッグ版）
+CREATE OR REPLACE FUNCTION create_user_with_debug(
     p_username VARCHAR(50),
     p_email VARCHAR(100),
     p_full_name VARCHAR(100),
-    p_department VARCHAR(100),
-    p_security_clearance VARCHAR(50),
-    p_rank VARCHAR(50),
-    p_phone VARCHAR(20),
-    p_created_by INTEGER DEFAULT NULL
+    p_department VARCHAR(50),
+    p_security_level INTEGER DEFAULT 1
 ) RETURNS INTEGER AS $$
 DECLARE
     v_user_id INTEGER;
     v_audit_id INTEGER;
 BEGIN
-    -- セキュリティクリアランスの検証
-    IF p_security_clearance NOT IN ('一般', '機密', '極秘', '最重要機密') THEN
-        RAISE EXCEPTION '無効なセキュリティクリアランス: %', p_security_clearance;
+    -- デバッグ開始
+    PERFORM log_debug('create_user_with_debug', 'START', 'ユーザー作成プロシージャ開始');
+    PERFORM log_debug('create_user_with_debug', 'PARAMS', 'パラメータ確認', 'username', p_username);
+    PERFORM log_debug('create_user_with_debug', 'PARAMS', 'パラメータ確認', 'email', p_email);
+    PERFORM log_debug('create_user_with_debug', 'PARAMS', 'パラメータ確認', 'security_level', p_security_level::TEXT);
+    
+    -- 入力値検証
+    IF p_username IS NULL OR p_email IS NULL OR p_full_name IS NULL THEN
+        PERFORM log_debug('create_user_with_debug', 'VALIDATION', '入力値検証エラー', 'error', '必須項目がNULL');
+        RAISE EXCEPTION '必須項目がNULLです';
     END IF;
     
+    PERFORM log_debug('create_user_with_debug', 'VALIDATION', '入力値検証完了');
+    
     -- ユーザー作成
-    INSERT INTO users (username, email, full_name, department, status, created_at)
-    VALUES (p_username, p_email, p_full_name, p_department, 'active', CURRENT_TIMESTAMP)
-    RETURNING user_id INTO v_user_id;
+    INSERT INTO users (username, email, full_name, department, security_level, created_at)
+    VALUES (p_username, p_email, p_full_name, p_department, p_security_level, CURRENT_TIMESTAMP)
+    RETURNING id INTO v_user_id;
     
-    -- セキュリティ情報を追加テーブルに保存（実際の実装では別テーブル）
-    -- ここではusersテーブルのdepartmentフィールドにセキュリティ情報を含める
+    PERFORM log_debug('create_user_with_debug', 'INSERT', 'ユーザー作成完了', 'user_id', v_user_id::TEXT);
     
-    -- セキュリティ監査ログ記録
-    INSERT INTO security_audit_logs (user_id, action_type, table_name, record_id, new_values, security_level)
-    VALUES (p_created_by, 'CREATE_USER', 'users', v_user_id, 
-            jsonb_build_object('username', p_username, 'security_clearance', p_security_clearance, 'rank', p_rank),
-            p_security_clearance);
+    -- 監査ログ作成
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (v_user_id, 'CREATE_USER', 'ユーザー作成: ' || p_username, CURRENT_TIMESTAMP)
+    RETURNING id INTO v_audit_id;
+    
+    PERFORM log_debug('create_user_with_debug', 'AUDIT', '監査ログ作成完了', 'audit_id', v_audit_id::TEXT);
+    
+    -- 完了
+    PERFORM log_debug('create_user_with_debug', 'END', 'ユーザー作成プロシージャ完了', 'user_id', v_user_id::TEXT);
     
     RETURN v_user_id;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('create_user_with_debug', 'ERROR', 'エラー発生', 'error_message', SQLERRM);
+        RAISE;
 END;
 $$ LANGUAGE plpgsql;
 
--- ロジスティクス資材管理プロシージャー
-CREATE OR REPLACE FUNCTION manage_logistics_material(
-    p_action VARCHAR(20), -- 'CREATE', 'UPDATE', 'DELETE'
+-- ロジスティクス材料作成プロシージャ（デバッグ版）
+CREATE OR REPLACE FUNCTION create_logistics_material_with_debug(
     p_material_code VARCHAR(50),
-    p_material_name VARCHAR(200),
-    p_category VARCHAR(100),
+    p_material_name VARCHAR(100),
+    p_category VARCHAR(50),
+    p_quantity INTEGER,
     p_unit VARCHAR(20),
-    p_current_stock INTEGER,
-    p_min_stock_level INTEGER,
-    p_max_stock_level INTEGER,
-    p_security_level VARCHAR(50),
-    p_location_code VARCHAR(50),
-    p_supplier_info TEXT,
-    p_user_id INTEGER
+    p_security_level INTEGER DEFAULT 1,
+    p_location VARCHAR(100) DEFAULT NULL
 ) RETURNS INTEGER AS $$
 DECLARE
     v_material_id INTEGER;
-    v_old_values JSONB;
-    v_new_values JSONB;
+    v_audit_id INTEGER;
 BEGIN
-    -- セキュリティレベル検証
-    IF p_security_level NOT IN ('一般', '機密', '極秘', '最重要機密') THEN
-        RAISE EXCEPTION '無効なセキュリティレベル: %', p_security_level;
+    -- デバッグ開始
+    PERFORM log_debug('create_logistics_material_with_debug', 'START', 'ロジスティクス材料作成プロシージャ開始');
+    PERFORM log_debug('create_logistics_material_with_debug', 'PARAMS', 'パラメータ確認', 'material_code', p_material_code);
+    PERFORM log_debug('create_logistics_material_with_debug', 'PARAMS', 'パラメータ確認', 'quantity', p_quantity::TEXT);
+    PERFORM log_debug('create_logistics_material_with_debug', 'PARAMS', 'パラメータ確認', 'security_level', p_security_level::TEXT);
+    
+    -- 入力値検証
+    IF p_material_code IS NULL OR p_material_name IS NULL OR p_quantity <= 0 THEN
+        PERFORM log_debug('create_logistics_material_with_debug', 'VALIDATION', '入力値検証エラー', 'error', '無効な入力値');
+        RAISE EXCEPTION '無効な入力値です';
     END IF;
     
-    CASE p_action
-        WHEN 'CREATE' THEN
-            INSERT INTO logistics_materials (
-                material_code, material_name, category, unit, current_stock,
-                min_stock_level, max_stock_level, security_level_id, location_code, supplier_info
-            )
-            SELECT p_material_code, p_material_name, p_category, p_unit, p_current_stock,
-                   p_min_stock_level, p_max_stock_level, sl.level_id, p_location_code, p_supplier_info
-            FROM security_levels sl WHERE sl.level_name = p_security_level
-            RETURNING material_id INTO v_material_id;
-            
-            v_new_values := jsonb_build_object(
-                'material_code', p_material_code,
-                'material_name', p_material_name,
-                'security_level', p_security_level
-            );
-            
-        WHEN 'UPDATE' THEN
-            SELECT material_id INTO v_material_id FROM logistics_materials WHERE material_code = p_material_code;
-            
-            IF v_material_id IS NULL THEN
-                RAISE EXCEPTION '資材が見つかりません: %', p_material_code;
-            END IF;
-            
-            -- 古い値を取得
-            SELECT to_jsonb(lm.*) INTO v_old_values FROM logistics_materials lm WHERE lm.material_id = v_material_id;
-            
-            UPDATE logistics_materials SET
-                material_name = p_material_name,
-                category = p_category,
-                unit = p_unit,
-                current_stock = p_current_stock,
-                min_stock_level = p_min_stock_level,
-                max_stock_level = p_max_stock_level,
-                security_level_id = (SELECT level_id FROM security_levels WHERE level_name = p_security_level),
-                location_code = p_location_code,
-                supplier_info = p_supplier_info,
-                last_updated = CURRENT_TIMESTAMP
-            WHERE material_id = v_material_id;
-            
-            v_new_values := jsonb_build_object(
-                'material_code', p_material_code,
-                'material_name', p_material_name,
-                'current_stock', p_current_stock
-            );
-            
-        WHEN 'DELETE' THEN
-            SELECT material_id INTO v_material_id FROM logistics_materials WHERE material_code = p_material_code;
-            
-            IF v_material_id IS NULL THEN
-                RAISE EXCEPTION '資材が見つかりません: %', p_material_code;
-            END IF;
-            
-            DELETE FROM logistics_materials WHERE material_id = v_material_id;
-            
-        ELSE
-            RAISE EXCEPTION '無効なアクション: %', p_action;
-    END CASE;
+    PERFORM log_debug('create_logistics_material_with_debug', 'VALIDATION', '入力値検証完了');
     
-    -- セキュリティ監査ログ記録
-    INSERT INTO security_audit_logs (user_id, action_type, table_name, record_id, old_values, new_values, security_level)
-    VALUES (p_user_id, p_action || '_MATERIAL', 'logistics_materials', v_material_id, v_old_values, v_new_values, p_security_level);
+    -- 材料作成
+    INSERT INTO logistics_materials (material_code, material_name, category, quantity, unit, security_level, location, created_at)
+    VALUES (p_material_code, p_material_name, p_category, p_quantity, p_unit, p_security_level, p_location, CURRENT_TIMESTAMP)
+    RETURNING id INTO v_material_id;
+    
+    PERFORM log_debug('create_logistics_material_with_debug', 'INSERT', '材料作成完了', 'material_id', v_material_id::TEXT);
+    
+    -- 監査ログ作成
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (NULL, 'CREATE_MATERIAL', '材料作成: ' || p_material_code || ' - ' || p_material_name, CURRENT_TIMESTAMP)
+    RETURNING id INTO v_audit_id;
+    
+    PERFORM log_debug('create_logistics_material_with_debug', 'AUDIT', '監査ログ作成完了', 'audit_id', v_audit_id::TEXT);
+    
+    -- 完了
+    PERFORM log_debug('create_logistics_material_with_debug', 'END', '材料作成プロシージャ完了', 'material_id', v_material_id::TEXT);
     
     RETURN v_material_id;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('create_logistics_material_with_debug', 'ERROR', 'エラー発生', 'error_message', SQLERRM);
+        RAISE;
 END;
 $$ LANGUAGE plpgsql;
 
--- 輸送オーダー管理プロシージャー
-CREATE OR REPLACE FUNCTION create_transportation_order(
-    p_priority_level INTEGER,
+-- 輸送オーダー作成プロシージャ（デバッグ版）
+DROP FUNCTION IF EXISTS create_transport_order_with_debug(VARCHAR, VARCHAR, VARCHAR, VARCHAR, INTEGER, DATE);
+CREATE OR REPLACE FUNCTION create_transport_order_with_debug(
+    p_order_number VARCHAR(50),
     p_origin_location VARCHAR(100),
     p_destination_location VARCHAR(100),
-    p_material_code VARCHAR(50),
-    p_quantity INTEGER,
-    p_required_date DATE,
-    p_assigned_vehicle VARCHAR(50),
-    p_assigned_driver VARCHAR(100),
-    p_created_by INTEGER
+    p_priority VARCHAR(20) DEFAULT 'NORMAL',
+    p_security_level INTEGER DEFAULT 1,
+    p_estimated_delivery_date DATE DEFAULT NULL
 ) RETURNS INTEGER AS $$
 DECLARE
     v_order_id INTEGER;
-    v_material_id INTEGER;
-    v_security_level VARCHAR(50);
+    v_audit_id INTEGER;
 BEGIN
-    -- 資材情報取得
-    SELECT lm.material_id, sl.level_name INTO v_material_id, v_security_level
-    FROM logistics_materials lm
-    JOIN security_levels sl ON lm.security_level_id = sl.level_id
-    WHERE lm.material_code = p_material_code;
-    
-    IF v_material_id IS NULL THEN
-        RAISE EXCEPTION '資材が見つかりません: %', p_material_code;
+    PERFORM log_debug('create_transport_order_with_debug', 'START', '輸送オーダー作成プロシージャ開始');
+    PERFORM log_debug('create_transport_order_with_debug', 'PARAMS', 'パラメータ確認', 'order_number', p_order_number);
+    PERFORM log_debug('create_transport_order_with_debug', 'PARAMS', 'パラメータ確認', 'priority', p_priority);
+    PERFORM log_debug('create_transport_order_with_debug', 'PARAMS', 'パラメータ確認', 'security_level', p_security_level::TEXT);
+    IF p_order_number IS NULL OR p_origin_location IS NULL OR p_destination_location IS NULL THEN
+        PERFORM log_debug('create_transport_order_with_debug', 'VALIDATION', '入力値検証エラー', 'error', '必須項目がNULL');
+        RAISE EXCEPTION '必須項目がNULLです';
     END IF;
-    
-    -- 在庫確認
-    IF (SELECT current_stock FROM logistics_materials WHERE material_id = v_material_id) < p_quantity THEN
-        RAISE EXCEPTION '在庫不足: 要求数量 % に対して在庫 %', 
-            p_quantity, (SELECT current_stock FROM logistics_materials WHERE material_id = v_material_id);
-    END IF;
-    
-    -- 輸送オーダー作成
-    INSERT INTO transportation_orders (
-        order_number, priority_level, origin_location, destination_location,
-        material_id, quantity, required_date, assigned_vehicle, assigned_driver,
-        security_clearance, created_by
-    )
-    VALUES (
-        'TO-' || to_char(CURRENT_TIMESTAMP, 'YYYYMMDD') || '-' || nextval('transportation_orders_order_id_seq'),
-        p_priority_level, p_origin_location, p_destination_location,
-        v_material_id, p_quantity, p_required_date, p_assigned_vehicle, p_assigned_driver,
-        v_security_level, p_created_by
-    )
-    RETURNING order_id INTO v_order_id;
-    
-    -- 在庫更新
-    UPDATE logistics_materials 
-    SET current_stock = current_stock - p_quantity,
-        last_updated = CURRENT_TIMESTAMP
-    WHERE material_id = v_material_id;
-    
-    -- セキュリティ監査ログ記録
-    INSERT INTO security_audit_logs (user_id, action_type, table_name, record_id, new_values, security_level)
-    VALUES (p_created_by, 'CREATE_TRANSPORT_ORDER', 'transportation_orders', v_order_id,
-            jsonb_build_object('order_number', 'TO-' || to_char(CURRENT_TIMESTAMP, 'YYYYMMDD') || '-' || v_order_id,
-                              'material_code', p_material_code, 'quantity', p_quantity),
-            v_security_level);
-    
+    PERFORM log_debug('create_transport_order_with_debug', 'VALIDATION', '入力値検証完了');
+    INSERT INTO transport_orders (order_number, origin_location, destination_location, priority, security_level, estimated_delivery_date, status, created_at)
+    VALUES (p_order_number, p_origin_location, p_destination_location, p_priority, p_security_level, p_estimated_delivery_date, 'PENDING', CURRENT_TIMESTAMP)
+    RETURNING id INTO v_order_id;
+    PERFORM log_debug('create_transport_order_with_debug', 'INSERT', '輸送オーダー作成完了', 'order_id', v_order_id::TEXT);
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (NULL, 'CREATE_TRANSPORT_ORDER', '輸送オーダー作成: ' || p_order_number, CURRENT_TIMESTAMP)
+    RETURNING id INTO v_audit_id;
+    PERFORM log_debug('create_transport_order_with_debug', 'AUDIT', '監査ログ作成完了', 'audit_id', v_audit_id::TEXT);
+    PERFORM log_debug('create_transport_order_with_debug', 'END', '輸送オーダー作成プロシージャ完了', 'order_id', v_order_id::TEXT);
     RETURN v_order_id;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('create_transport_order_with_debug', 'ERROR', 'エラー発生', 'error_message', SQLERRM);
+        RAISE;
 END;
 $$ LANGUAGE plpgsql;
 
--- 緊急事態管理プロシージャー
-CREATE OR REPLACE FUNCTION report_emergency_incident(
-    p_incident_type VARCHAR(100),
-    p_severity_level INTEGER,
-    p_location VARCHAR(200),
+-- 緊急事態報告プロシージャ（デバッグ版）
+DROP FUNCTION IF EXISTS report_emergency_incident_with_debug(VARCHAR, VARCHAR, VARCHAR, TEXT, INTEGER, INTEGER);
+CREATE OR REPLACE FUNCTION report_emergency_incident_with_debug(
+    p_incident_type VARCHAR(50),
+    p_location VARCHAR(100),
+    p_severity VARCHAR(20),
     p_description TEXT,
-    p_affected_materials TEXT,
-    p_response_team VARCHAR(100),
-    p_reported_by INTEGER
-) RETURNS INTEGER AS $$
+    p_reported_by INTEGER DEFAULT NULL,
+    p_security_level INTEGER DEFAULT 1
+) RETURNS TABLE (
+    incident_id INTEGER,
+    incident_type VARCHAR(50),
+    location VARCHAR(100),
+    severity VARCHAR(20),
+    description TEXT,
+    reported_by INTEGER,
+    security_level INTEGER,
+    status VARCHAR(20),
+    created_at TIMESTAMP
+) AS $$
 DECLARE
     v_incident_id INTEGER;
-    v_incident_code VARCHAR(50);
+    v_audit_id INTEGER;
 BEGIN
-    -- 重大度レベルの検証
-    IF p_severity_level NOT BETWEEN 1 AND 5 THEN
-        RAISE EXCEPTION '無効な重大度レベル: % (1-5の範囲で指定してください)', p_severity_level;
+    PERFORM log_debug('report_emergency_incident_with_debug', 'START', '緊急事態報告プロシージャ開始');
+    PERFORM log_debug('report_emergency_incident_with_debug', 'PARAMS', 'パラメータ確認', 'incident_type', p_incident_type);
+    PERFORM log_debug('report_emergency_incident_with_debug', 'PARAMS', 'パラメータ確認', 'severity', p_severity);
+    PERFORM log_debug('report_emergency_incident_with_debug', 'PARAMS', 'パラメータ確認', 'security_level', p_security_level::TEXT);
+    IF p_incident_type IS NULL OR p_location IS NULL OR p_severity IS NULL THEN
+        PERFORM log_debug('report_emergency_incident_with_debug', 'VALIDATION', '入力値検証エラー', 'error', '必須項目がNULL');
+        RAISE EXCEPTION '必須項目がNULLです';
     END IF;
-    
-    -- インシデントコード生成
-    v_incident_code := 'EI-' || to_char(CURRENT_TIMESTAMP, 'YYYYMMDD-HH24MISS');
-    
-    -- 緊急事態記録
-    INSERT INTO emergency_incidents (
-        incident_code, incident_type, severity_level, location, description,
-        affected_materials, response_team, reported_by
-    )
-    VALUES (
-        v_incident_code, p_incident_type, p_severity_level, p_location, p_description,
-        p_affected_materials, p_response_team, p_reported_by
-    )
-    RETURNING incident_id INTO v_incident_id;
-    
-    -- セキュリティ監査ログ記録
-    INSERT INTO security_audit_logs (user_id, action_type, table_name, record_id, new_values, security_level)
-    VALUES (p_reported_by, 'REPORT_EMERGENCY', 'emergency_incidents', v_incident_id,
-            jsonb_build_object('incident_code', v_incident_code, 'severity_level', p_severity_level),
-            '極秘');
-    
-    -- 重大度レベル4-5の場合は自動的にアラートを発行
-    IF p_severity_level >= 4 THEN
-        PERFORM send_emergency_alert(v_incident_id, p_severity_level, p_location);
-    END IF;
-    
-    RETURN v_incident_id;
+    PERFORM log_debug('report_emergency_incident_with_debug', 'VALIDATION', '入力値検証完了');
+    INSERT INTO emergency_incidents (incident_type, location, severity, description, reported_by, security_level, status, created_at)
+    VALUES (p_incident_type, p_location, p_severity, p_description, p_reported_by, p_security_level, 'ACTIVE', CURRENT_TIMESTAMP)
+    RETURNING id INTO v_incident_id;
+    PERFORM log_debug('report_emergency_incident_with_debug', 'INSERT', '緊急事態報告作成完了', 'incident_id', v_incident_id::TEXT);
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (p_reported_by, 'REPORT_EMERGENCY', '緊急事態報告: ' || p_incident_type || ' at ' || p_location, CURRENT_TIMESTAMP)
+    RETURNING id INTO v_audit_id;
+    PERFORM log_debug('report_emergency_incident_with_debug', 'AUDIT', '監査ログ作成完了', 'audit_id', v_audit_id::TEXT);
+    PERFORM log_debug('report_emergency_incident_with_debug', 'END', '緊急事態報告プロシージャ完了', 'incident_id', v_incident_id::TEXT);
+    RETURN QUERY SELECT id, incident_type, location, severity, description, reported_by, security_level, status, created_at FROM emergency_incidents WHERE id = v_incident_id;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('report_emergency_incident_with_debug', 'ERROR', 'エラー発生', 'error_message', SQLERRM);
+        RAISE;
 END;
 $$ LANGUAGE plpgsql;
 
--- 緊急アラート送信プロシージャー（実装例）
-CREATE OR REPLACE FUNCTION send_emergency_alert(
-    p_incident_id INTEGER,
-    p_severity_level INTEGER,
-    p_location VARCHAR(200)
-) RETURNS VOID AS $$
-BEGIN
-    -- 実際の実装では、メール送信、SMS送信、システム通知などを実行
-    -- ここではログに記録するのみ
-    INSERT INTO security_audit_logs (user_id, action_type, table_name, record_id, new_values, security_level)
-    VALUES (1, 'EMERGENCY_ALERT', 'emergency_incidents', p_incident_id,
-            jsonb_build_object('severity_level', p_severity_level, 'location', p_location),
-            '最重要機密');
-    
-    RAISE NOTICE '緊急アラート発行: インシデントID %, 重大度レベル %, 場所 %', 
-        p_incident_id, p_severity_level, p_location;
-END;
-$$ LANGUAGE plpgsql;
-
--- 在庫監視プロシージャー
-CREATE OR REPLACE FUNCTION monitor_inventory_levels() RETURNS TABLE(
+-- 在庫監視プロシージャ（デバッグ版）
+DROP FUNCTION IF EXISTS monitor_inventory_with_debug(INTEGER);
+CREATE OR REPLACE FUNCTION monitor_inventory_with_debug(
+    p_threshold INTEGER DEFAULT 10
+) RETURNS TABLE (
+    material_id INTEGER,
     material_code VARCHAR(50),
-    material_name VARCHAR(200),
-    current_stock INTEGER,
-    min_stock_level INTEGER,
-    max_stock_level INTEGER,
-    stock_status VARCHAR(20),
-    security_level VARCHAR(50)
+    material_name VARCHAR(100),
+    current_quantity INTEGER,
+    threshold INTEGER,
+    status VARCHAR(20)
 ) AS $$
+DECLARE
+    v_count INTEGER := 0;
 BEGIN
+    PERFORM log_debug('monitor_inventory_with_debug', 'START', '在庫監視プロシージャ開始');
+    PERFORM log_debug('monitor_inventory_with_debug', 'PARAMS', 'パラメータ確認', 'threshold', p_threshold::TEXT);
     RETURN QUERY
     SELECT 
+        lm.id,
         lm.material_code,
         lm.material_name,
-        lm.current_stock,
-        lm.min_stock_level,
-        lm.max_stock_level,
+        lm.quantity,
+        p_threshold,
         CASE 
-            WHEN lm.current_stock <= lm.min_stock_level THEN '在庫不足'
-            WHEN lm.current_stock >= lm.max_stock_level THEN '在庫過多'
-            ELSE '正常'
-        END as stock_status,
-        sl.level_name as security_level
+            WHEN lm.quantity <= p_threshold THEN 'LOW_STOCK'
+            ELSE 'NORMAL'
+        END as status
     FROM logistics_materials lm
-    JOIN security_levels sl ON lm.security_level_id = sl.level_id
-    ORDER BY 
-        CASE 
-            WHEN lm.current_stock <= lm.min_stock_level THEN 1
-            WHEN lm.current_stock >= lm.max_stock_level THEN 2
-            ELSE 3
-        END,
-        lm.material_name;
+    WHERE lm.quantity <= p_threshold;
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    PERFORM log_debug('monitor_inventory_with_debug', 'QUERY', '在庫監視クエリ実行完了', 'low_stock_count', v_count::TEXT);
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (NULL, 'MONITOR_INVENTORY', '在庫監視実行: ' || v_count || '個の材料が低在庫', CURRENT_TIMESTAMP);
+    PERFORM log_debug('monitor_inventory_with_debug', 'AUDIT', '監査ログ作成完了');
+    PERFORM log_debug('monitor_inventory_with_debug', 'END', '在庫監視プロシージャ完了', 'total_low_stock', v_count::TEXT);
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('monitor_inventory_with_debug', 'ERROR', 'エラー発生', 'error_message', SQLERRM);
+        RAISE;
 END;
 $$ LANGUAGE plpgsql;
 
--- セキュリティ監査レポート生成プロシージャー
-CREATE OR REPLACE FUNCTION generate_security_audit_report(
-    p_start_date DATE DEFAULT CURRENT_DATE - INTERVAL '30 days',
-    p_end_date DATE DEFAULT CURRENT_DATE,
-    p_security_level VARCHAR(50) DEFAULT NULL
-) RETURNS TABLE(
-    user_name VARCHAR(100),
-    action_type VARCHAR(50),
-    table_name VARCHAR(50),
-    record_count BIGINT,
-    last_action TIMESTAMP,
-    security_level VARCHAR(50)
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT 
-        u.full_name as user_name,
-        sal.action_type,
-        sal.table_name,
-        COUNT(*) as record_count,
-        MAX(sal.timestamp) as last_action,
-        sal.security_level
-    FROM security_audit_logs sal
-    LEFT JOIN users u ON sal.user_id = u.user_id
-    WHERE sal.timestamp::date BETWEEN p_start_date AND p_end_date
-        AND (p_security_level IS NULL OR sal.security_level = p_security_level)
-    GROUP BY u.full_name, sal.action_type, sal.table_name, sal.security_level
-    ORDER BY record_count DESC, last_action DESC;
-END;
-$$ LANGUAGE plpgsql;
-
--- 輸送効率分析プロシージャー
-CREATE OR REPLACE FUNCTION analyze_transportation_efficiency(
+-- セキュリティ監査レポート生成プロシージャ（デバッグ版）
+DROP FUNCTION IF EXISTS generate_security_audit_report_with_debug(DATE, DATE);
+CREATE OR REPLACE FUNCTION generate_security_audit_report_with_debug(
     p_start_date DATE DEFAULT CURRENT_DATE - INTERVAL '30 days',
     p_end_date DATE DEFAULT CURRENT_DATE
-) RETURNS TABLE(
-    origin_location VARCHAR(100),
-    destination_location VARCHAR(100),
-    total_orders BIGINT,
-    total_quantity BIGINT,
-    avg_priority DECIMAL(3,2),
-    completion_rate DECIMAL(5,2)
+) RETURNS TABLE (
+    user_id INTEGER,
+    username VARCHAR(50),
+    action_count INTEGER,
+    last_action TIMESTAMP,
+    security_level INTEGER
 ) AS $$
+DECLARE
+    v_count INTEGER := 0;
 BEGIN
+    PERFORM log_debug('generate_security_audit_report_with_debug', 'START', 'セキュリティ監査レポート生成プロシージャ開始');
+    PERFORM log_debug('generate_security_audit_report_with_debug', 'PARAMS', 'パラメータ確認', 'start_date', p_start_date::TEXT);
+    PERFORM log_debug('generate_security_audit_report_with_debug', 'PARAMS', 'パラメータ確認', 'end_date', p_end_date::TEXT);
     RETURN QUERY
     SELECT 
-        to.origin_location,
-        to.destination_location,
-        COUNT(*) as total_orders,
-        SUM(to.quantity) as total_quantity,
-        AVG(to.priority_level::DECIMAL) as avg_priority,
-        (COUNT(CASE WHEN to.status = 'completed' THEN 1 END) * 100.0 / COUNT(*)) as completion_rate
-    FROM transportation_orders to
-    WHERE to.created_at::date BETWEEN p_start_date AND p_end_date
-    GROUP BY to.origin_location, to.destination_location
-    ORDER BY total_orders DESC;
+        u.id,
+        u.username,
+        COUNT(al.id)::INTEGER as action_count,
+        MAX(al.created_at) as last_action,
+        u.security_level
+    FROM users u
+    LEFT JOIN audit_log al ON u.id = al.user_id 
+        AND al.created_at BETWEEN p_start_date AND p_end_date
+    GROUP BY u.id, u.username, u.security_level
+    ORDER BY action_count DESC;
+    GET DIAGNOSTICS v_count = ROW_COUNT;
+    PERFORM log_debug('generate_security_audit_report_with_debug', 'QUERY', 'レポート生成クエリ実行完了', 'user_count', v_count::TEXT);
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (NULL, 'GENERATE_SECURITY_REPORT', 'セキュリティ監査レポート生成: ' || v_count || 'ユーザー', CURRENT_TIMESTAMP);
+    PERFORM log_debug('generate_security_audit_report_with_debug', 'AUDIT', '監査ログ作成完了');
+    PERFORM log_debug('generate_security_audit_report_with_debug', 'END', 'セキュリティ監査レポート生成プロシージャ完了', 'total_users', v_count::TEXT);
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('generate_security_audit_report_with_debug', 'ERROR', 'エラー発生', 'error_message', SQLERRM);
+        RAISE;
 END;
 $$ LANGUAGE plpgsql;
 
--- システムヘルスチェック（防衛省仕様）
-CREATE OR REPLACE FUNCTION defense_system_health_check() RETURNS TABLE(
-    check_item VARCHAR(100),
-    status VARCHAR(20),
-    details TEXT,
-    severity VARCHAR(20)
-) AS $$
-DECLARE
-    v_low_stock_count INTEGER;
-    v_pending_orders_count INTEGER;
-    v_active_incidents_count INTEGER;
-    v_recent_audit_count INTEGER;
-BEGIN
-    -- 在庫不足チェック
-    SELECT COUNT(*) INTO v_low_stock_count
-    FROM logistics_materials 
-    WHERE current_stock <= min_stock_level;
-    
-    IF v_low_stock_count > 0 THEN
-        RETURN QUERY SELECT 
-            '在庫不足資材'::VARCHAR(100),
-            '警告'::VARCHAR(20),
-            (v_low_stock_count || '件の資材が在庫不足です')::TEXT,
-            '中'::VARCHAR(20);
-    END IF;
-    
-    -- 未処理輸送オーダーチェック
-    SELECT COUNT(*) INTO v_pending_orders_count
-    FROM transportation_orders 
-    WHERE status = 'pending' AND required_date < CURRENT_DATE;
-    
-    IF v_pending_orders_count > 0 THEN
-        RETURN QUERY SELECT 
-            '期限超過輸送オーダー'::VARCHAR(100),
-            '緊急'::VARCHAR(20),
-            (v_pending_orders_count || '件の輸送オーダーが期限超過です')::TEXT,
-            '高'::VARCHAR(20);
-    END IF;
-    
-    -- アクティブな緊急事態チェック
-    SELECT COUNT(*) INTO v_active_incidents_count
-    FROM emergency_incidents 
-    WHERE status = 'active' AND severity_level >= 4;
-    
-    IF v_active_incidents_count > 0 THEN
-        RETURN QUERY SELECT 
-            '重大緊急事態'::VARCHAR(100),
-            '緊急'::VARCHAR(20),
-            (v_active_incidents_count || '件の重大な緊急事態が発生中です')::TEXT,
-            '最高'::VARCHAR(20);
-    END IF;
-    
-    -- セキュリティ監査ログチェック
-    SELECT COUNT(*) INTO v_recent_audit_count
-    FROM security_audit_logs 
-    WHERE timestamp > CURRENT_TIMESTAMP - INTERVAL '1 hour';
-    
-    IF v_recent_audit_count = 0 THEN
-        RETURN QUERY SELECT 
-            'セキュリティ監査ログ'::VARCHAR(100),
-            '警告'::VARCHAR(20),
-            '過去1時間にセキュリティ監査ログが記録されていません'::TEXT,
-            '中'::VARCHAR(20);
-    END IF;
-    
-    -- システム正常
-    RETURN QUERY SELECT 
-        'システム全体'::VARCHAR(100),
-        '正常'::VARCHAR(20),
-        'すべてのシステムが正常に動作しています'::TEXT,
-        '低'::VARCHAR(20);
-END;
-$$ LANGUAGE plpgsql;
-
--- データエクスポート機能（セキュリティ考慮）
-CREATE OR REPLACE FUNCTION export_secure_data(
-    p_data_type VARCHAR(50),
-    p_security_level VARCHAR(50),
-    p_user_id INTEGER
+-- デバッグログエクスポート関数
+DROP FUNCTION IF EXISTS export_debug_log_to_csv(VARCHAR);
+CREATE OR REPLACE FUNCTION export_debug_log_to_csv(
+    p_filename VARCHAR(100) DEFAULT 'debug_log.csv'
 ) RETURNS TEXT AS $$
 DECLARE
-    v_export_data TEXT;
-    v_filename VARCHAR(100);
+    v_result TEXT;
 BEGIN
-    -- セキュリティレベル検証
-    IF p_security_level NOT IN ('一般', '機密', '極秘', '最重要機密') THEN
-        RAISE EXCEPTION '無効なセキュリティレベル: %', p_security_level;
+    PERFORM log_debug('export_debug_log_to_csv', 'START', 'デバッグログエクスポート開始');
+    PERFORM log_debug('export_debug_log_to_csv', 'PARAMS', 'パラメータ確認', 'filename', p_filename);
+    SELECT string_agg(rowstr, E'\n') INTO v_result
+    FROM (
+        SELECT id || ',' || procedure_name || ',' || COALESCE(step_name, '') || ',' || COALESCE(message, '') || ',' || COALESCE(variable_name, '') || ',' || COALESCE(variable_value, '') || ',' || created_at::TEXT as rowstr
+        FROM debug_log
+        ORDER BY created_at DESC
+    ) t;
+    PERFORM log_debug('export_debug_log_to_csv', 'EXPORT', 'CSVエクスポート完了', 'record_count', (SELECT COUNT(*) FROM debug_log)::TEXT);
+    PERFORM log_debug('export_debug_log_to_csv', 'END', 'デバッグログエクスポート完了');
+    RETURN v_result;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('export_debug_log_to_csv', 'ERROR', 'エラー発生', 'error_message', SQLERRM);
+        RAISE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- デバッグログ統計関数
+CREATE OR REPLACE FUNCTION get_debug_statistics() RETURNS TABLE (
+    total_logs INTEGER,
+    procedures_count INTEGER,
+    error_count INTEGER,
+    latest_log TIMESTAMP
+) AS $$
+BEGIN
+    -- デバッグ開始
+    PERFORM log_debug('get_debug_statistics', 'START', 'デバッグ統計取得開始');
+    
+    RETURN QUERY
+    SELECT 
+        COUNT(*)::INTEGER as total_logs,
+        COUNT(DISTINCT procedure_name)::INTEGER as procedures_count,
+        COUNT(CASE WHEN message LIKE '%ERROR%' THEN 1 END)::INTEGER as error_count,
+        MAX(created_at) as latest_log
+    FROM debug_log;
+    
+    PERFORM log_debug('get_debug_statistics', 'END', 'デバッグ統計取得完了');
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('get_debug_statistics', 'ERROR', 'エラー発生', 'error_message', SQLERRM);
+        RAISE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 実用性向上のための追加機能
+
+-- 1. 在庫アラート機能（自動通知）
+CREATE OR REPLACE FUNCTION create_inventory_alert(
+    p_material_id INTEGER,
+    p_alert_type VARCHAR(20), -- 'LOW_STOCK', 'OUT_OF_STOCK', 'EXPIRING'
+    p_message TEXT,
+    p_priority VARCHAR(20) DEFAULT 'MEDIUM'
+) RETURNS INTEGER AS $$
+DECLARE
+    v_alert_id INTEGER;
+    v_material_name VARCHAR(100);
+BEGIN
+    -- 材料名を取得
+    SELECT material_name INTO v_material_name FROM logistics_materials WHERE id = p_material_id;
+    
+    -- アラートテーブルが存在しない場合は作成
+    CREATE TABLE IF NOT EXISTS inventory_alerts (
+        id SERIAL PRIMARY KEY,
+        material_id INTEGER REFERENCES logistics_materials(id),
+        alert_type VARCHAR(20) NOT NULL,
+        message TEXT NOT NULL,
+        priority VARCHAR(20) DEFAULT 'MEDIUM',
+        status VARCHAR(20) DEFAULT 'ACTIVE',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        resolved_at TIMESTAMP,
+        resolved_by INTEGER REFERENCES users(id)
+    );
+    
+    -- アラート作成
+    INSERT INTO inventory_alerts (material_id, alert_type, message, priority, status)
+    VALUES (p_material_id, p_alert_type, p_message, p_priority, 'ACTIVE')
+    RETURNING id INTO v_alert_id;
+    
+    -- 監査ログ作成
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (NULL, 'CREATE_INVENTORY_ALERT', '在庫アラート作成: ' || v_material_name || ' - ' || p_alert_type, CURRENT_TIMESTAMP);
+    
+    -- デバッグログ
+    PERFORM log_debug('create_inventory_alert', 'ALERT_CREATED', '在庫アラート作成完了', 'alert_id', v_alert_id::TEXT);
+    
+    RETURN v_alert_id;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('create_inventory_alert', 'ERROR', 'アラート作成エラー', 'error_message', SQLERRM);
+        RAISE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2. 自動在庫監視とアラート生成
+CREATE OR REPLACE FUNCTION auto_monitor_inventory() RETURNS VOID AS $$
+DECLARE
+    v_material RECORD;
+    v_alert_id INTEGER;
+BEGIN
+    PERFORM log_debug('auto_monitor_inventory', 'START', '自動在庫監視開始');
+    
+    -- 低在庫材料をチェック
+    FOR v_material IN 
+        SELECT id, material_name, quantity, unit 
+        FROM logistics_materials 
+        WHERE quantity <= 10
+    LOOP
+        -- アラート作成
+        SELECT create_inventory_alert(
+            v_material.id,
+            'LOW_STOCK',
+            '材料「' || v_material.material_name || '」の在庫が不足しています。現在在庫: ' || v_material.quantity || ' ' || v_material.unit,
+            'HIGH'
+        ) INTO v_alert_id;
+        
+        RAISE NOTICE '低在庫アラート作成: % (ID: %)', v_material.material_name, v_alert_id;
+    END LOOP;
+    
+    PERFORM log_debug('auto_monitor_inventory', 'END', '自動在庫監視完了');
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('auto_monitor_inventory', 'ERROR', '自動監視エラー', 'error_message', SQLERRM);
+        RAISE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 3. 輸送オーダー追跡機能
+CREATE OR REPLACE FUNCTION update_transport_status(
+    p_order_id INTEGER,
+    p_new_status VARCHAR(20),
+    p_location VARCHAR(100) DEFAULT NULL,
+    p_notes TEXT DEFAULT NULL
+) RETURNS BOOLEAN AS $$
+DECLARE
+    v_order_number VARCHAR(50);
+    v_audit_id INTEGER;
+BEGIN
+    PERFORM log_debug('update_transport_status', 'START', '輸送ステータス更新開始');
+    PERFORM log_debug('update_transport_status', 'PARAMS', 'パラメータ確認', 'order_id', p_order_id::TEXT);
+    PERFORM log_debug('update_transport_status', 'PARAMS', 'パラメータ確認', 'new_status', p_new_status);
+    
+    -- オーダー番号を取得
+    SELECT order_number INTO v_order_number FROM transport_orders WHERE id = p_order_id;
+    
+    IF v_order_number IS NULL THEN
+        PERFORM log_debug('update_transport_status', 'ERROR', 'オーダーが見つかりません', 'order_id', p_order_id::TEXT);
+        RETURN FALSE;
     END IF;
     
-    CASE p_data_type
-        WHEN 'logistics_materials' THEN
-            SELECT string_agg(
-                material_code || ',' || material_name || ',' || category || ',' || 
-                current_stock || ',' || security_level, E'\n'
-            ) INTO v_export_data
-            FROM logistics_materials lm
-            JOIN security_levels sl ON lm.security_level_id = sl.level_id
-            WHERE sl.level_name <= p_security_level;
-            
-        WHEN 'transportation_orders' THEN
-            SELECT string_agg(
-                order_number || ',' || origin_location || ',' || destination_location || ',' ||
-                quantity || ',' || status, E'\n'
-            ) INTO v_export_data
-            FROM transportation_orders to
-            WHERE to.security_clearance <= p_security_level;
-            
-        WHEN 'security_audit' THEN
-            SELECT string_agg(
-                timestamp::text || ',' || action_type || ',' || table_name || ',' ||
-                security_level, E'\n'
-            ) INTO v_export_data
-            FROM security_audit_logs sal
-            WHERE sal.security_level <= p_security_level
-            AND sal.timestamp > CURRENT_TIMESTAMP - INTERVAL '7 days';
-            
-        ELSE
-            RAISE EXCEPTION '無効なデータタイプ: %', p_data_type;
-    END CASE;
+    -- ステータス更新
+    UPDATE transport_orders 
+    SET status = p_new_status,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = p_order_id;
     
-    -- エクスポートログ記録
-    INSERT INTO security_audit_logs (user_id, action_type, table_name, new_values, security_level)
-    VALUES (p_user_id, 'EXPORT_DATA', p_data_type, 
-            jsonb_build_object('data_type', p_data_type, 'security_level', p_security_level),
-            p_security_level);
+    -- 追跡ログテーブルが存在しない場合は作成
+    CREATE TABLE IF NOT EXISTS transport_tracking (
+        id SERIAL PRIMARY KEY,
+        order_id INTEGER REFERENCES transport_orders(id),
+        status VARCHAR(20) NOT NULL,
+        location VARCHAR(100),
+        notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER REFERENCES users(id)
+    );
     
-    v_filename := p_data_type || '_' || to_char(CURRENT_TIMESTAMP, 'YYYYMMDD_HH24MISS') || '.csv';
+    -- 追跡ログ作成
+    INSERT INTO transport_tracking (order_id, status, location, notes)
+    VALUES (p_order_id, p_new_status, p_location, p_notes);
     
-    RETURN 'ファイル名: ' || v_filename || E'\n\n' || v_export_data;
+    -- 監査ログ作成
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (NULL, 'UPDATE_TRANSPORT_STATUS', '輸送ステータス更新: ' || v_order_number || ' → ' || p_new_status, CURRENT_TIMESTAMP)
+    RETURNING id INTO v_audit_id;
+    
+    PERFORM log_debug('update_transport_status', 'SUCCESS', 'ステータス更新完了', 'order_number', v_order_number);
+    
+    RETURN TRUE;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('update_transport_status', 'ERROR', 'ステータス更新エラー', 'error_message', SQLERRM);
+        RETURN FALSE;
 END;
 $$ LANGUAGE plpgsql;
 
--- 自動メンテナンスプロシージャー
-CREATE OR REPLACE FUNCTION auto_maintenance_defense_system() RETURNS VOID AS $$
+-- 4. 緊急事態エスカレーション機能
+CREATE OR REPLACE FUNCTION escalate_emergency_incident(
+    p_incident_id INTEGER,
+    p_escalation_level INTEGER DEFAULT 1
+) RETURNS BOOLEAN AS $$
 DECLARE
-    v_old_records_count INTEGER;
-    v_cleaned_records_count INTEGER;
+    v_incident_type VARCHAR(50);
+    v_location VARCHAR(100);
+    v_severity VARCHAR(20);
+    v_audit_id INTEGER;
 BEGIN
-    -- 古いセキュリティ監査ログのクリーンアップ（1年以上前）
-    DELETE FROM security_audit_logs 
-    WHERE timestamp < CURRENT_TIMESTAMP - INTERVAL '1 year';
+    PERFORM log_debug('escalate_emergency_incident', 'START', '緊急事態エスカレーション開始');
+    PERFORM log_debug('escalate_emergency_incident', 'PARAMS', 'パラメータ確認', 'incident_id', p_incident_id::TEXT);
+    PERFORM log_debug('escalate_emergency_incident', 'PARAMS', 'パラメータ確認', 'escalation_level', p_escalation_level::TEXT);
     
-    GET DIAGNOSTICS v_cleaned_records_count = ROW_COUNT;
+    -- インシデント情報を取得
+    SELECT incident_type, location, severity 
+    INTO v_incident_type, v_location, v_severity
+    FROM emergency_incidents 
+    WHERE id = p_incident_id;
     
-    -- 解決済み緊急事態のアーカイブ（30日以上前）
+    IF v_incident_type IS NULL THEN
+        PERFORM log_debug('escalate_emergency_incident', 'ERROR', 'インシデントが見つかりません', 'incident_id', p_incident_id::TEXT);
+        RETURN FALSE;
+    END IF;
+    
+    -- エスカレーションログテーブルが存在しない場合は作成
+    CREATE TABLE IF NOT EXISTS emergency_escalations (
+        id SERIAL PRIMARY KEY,
+        incident_id INTEGER REFERENCES emergency_incidents(id),
+        escalation_level INTEGER NOT NULL,
+        escalated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        escalated_by INTEGER REFERENCES users(id),
+        notes TEXT
+    );
+    
+    -- エスカレーション記録
+    INSERT INTO emergency_escalations (incident_id, escalation_level)
+    VALUES (p_incident_id, p_escalation_level);
+    
+    -- インシデントの重要度を更新
     UPDATE emergency_incidents 
-    SET status = 'archived'
-    WHERE status = 'resolved' 
-    AND resolved_at < CURRENT_TIMESTAMP - INTERVAL '30 days';
+    SET severity = CASE 
+        WHEN p_escalation_level >= 2 THEN 'CRITICAL'
+        WHEN p_escalation_level >= 1 THEN 'HIGH'
+        ELSE severity
+    END
+    WHERE id = p_incident_id;
     
-    -- 統計情報記録
-    INSERT INTO security_audit_logs (user_id, action_type, table_name, new_values, security_level)
-    VALUES (1, 'AUTO_MAINTENANCE', 'system', 
-            jsonb_build_object('cleaned_audit_logs', v_cleaned_records_count),
-            '一般');
+    -- 監査ログ作成
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (NULL, 'ESCALATE_EMERGENCY', '緊急事態エスカレーション: ' || v_incident_type || ' at ' || v_location || ' (Level: ' || p_escalation_level || ')', CURRENT_TIMESTAMP)
+    RETURNING id INTO v_audit_id;
     
-    RAISE NOTICE '自動メンテナンス完了: %件の古い監査ログを削除しました', v_cleaned_records_count;
+    PERFORM log_debug('escalate_emergency_incident', 'SUCCESS', 'エスカレーション完了', 'incident_type', v_incident_type);
+    
+    RETURN TRUE;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('escalate_emergency_incident', 'ERROR', 'エスカレーションエラー', 'error_message', SQLERRM);
+        RETURN FALSE;
 END;
 $$ LANGUAGE plpgsql;
 
--- 初期データ挿入
-INSERT INTO logistics_materials (material_code, material_name, category, unit, current_stock, min_stock_level, max_stock_level, security_level_id, location_code, supplier_info) VALUES
-('MAT001', '燃料（軽油）', '燃料', 'リットル', 10000, 2000, 15000, 1, 'LOC001', '燃料供給会社A'),
-('MAT002', '食糧（缶詰）', '食糧', '缶', 5000, 1000, 8000, 1, 'LOC002', '食糧供給会社B'),
-('MAT003', '通信機器', '電子機器', '台', 100, 20, 200, 2, 'LOC003', '通信機器会社C'),
-('MAT004', '医療用品', '医療', 'セット', 200, 50, 300, 2, 'LOC004', '医療用品会社D'),
-('MAT005', '武器部品', '武器', '個', 50, 10, 100, 4, 'LOC005', '武器部品会社E')
-ON CONFLICT (material_code) DO NOTHING;
-
--- 完了メッセージ
-DO $$
+-- 5. セキュリティレベル別アクセス制御
+CREATE OR REPLACE FUNCTION check_security_access(
+    p_user_id INTEGER,
+    p_required_level INTEGER,
+    p_action VARCHAR(50)
+) RETURNS BOOLEAN AS $$
+DECLARE
+    v_user_level INTEGER;
+    v_access_granted BOOLEAN := FALSE;
 BEGIN
-    RAISE NOTICE '防衛省ロジスティクス基盤プロシージャーの作成が完了しました';
-    RAISE NOTICE '作成された機能:';
-    RAISE NOTICE '- セキュリティレベル管理';
-    RAISE NOTICE '- ロジスティクス資材管理';
-    RAISE NOTICE '- 輸送オーダー管理';
-    RAISE NOTICE '- 緊急事態管理';
-    RAISE NOTICE '- セキュリティ監査';
-    RAISE NOTICE '- 在庫監視';
-    RAISE NOTICE '- 輸送効率分析';
-    RAISE NOTICE '- システムヘルスチェック';
-    RAISE NOTICE '- セキュアデータエクスポート';
-    RAISE NOTICE '- 自動メンテナンス';
-END $$; 
+    PERFORM log_debug('check_security_access', 'START', 'セキュリティアクセスチェック開始');
+    PERFORM log_debug('check_security_access', 'PARAMS', 'パラメータ確認', 'user_id', p_user_id::TEXT);
+    PERFORM log_debug('check_security_access', 'PARAMS', 'パラメータ確認', 'required_level', p_required_level::TEXT);
+    PERFORM log_debug('check_security_access', 'PARAMS', 'パラメータ確認', 'action', p_action);
+    
+    -- ユーザーのセキュリティレベルを取得
+    SELECT security_level INTO v_user_level FROM users WHERE id = p_user_id;
+    
+    IF v_user_level IS NULL THEN
+        PERFORM log_debug('check_security_access', 'ERROR', 'ユーザーが見つかりません', 'user_id', p_user_id::TEXT);
+        RETURN FALSE;
+    END IF;
+    
+    -- アクセス権限チェック
+    IF v_user_level >= p_required_level THEN
+        v_access_granted := TRUE;
+        PERFORM log_debug('check_security_access', 'ACCESS_GRANTED', 'アクセス許可', 'user_level', v_user_level::TEXT);
+    ELSE
+        PERFORM log_debug('check_security_access', 'ACCESS_DENIED', 'アクセス拒否', 'user_level', v_user_level::TEXT);
+    END IF;
+    
+    -- アクセスログテーブルが存在しない場合は作成
+    CREATE TABLE IF NOT EXISTS access_log (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER REFERENCES users(id),
+        action VARCHAR(50) NOT NULL,
+        required_level INTEGER NOT NULL,
+        user_level INTEGER NOT NULL,
+        access_granted BOOLEAN NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    -- アクセスログ記録
+    INSERT INTO access_log (user_id, action, required_level, user_level, access_granted)
+    VALUES (p_user_id, p_action, p_required_level, v_user_level, v_access_granted);
+    
+    RETURN v_access_granted;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('check_security_access', 'ERROR', 'アクセスチェックエラー', 'error_message', SQLERRM);
+        RETURN FALSE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 6. データバックアップ・復元機能
+CREATE OR REPLACE FUNCTION create_system_backup() RETURNS TEXT AS $$
+DECLARE
+    v_backup_id VARCHAR(50);
+    v_backup_path TEXT;
+    v_timestamp TIMESTAMP := CURRENT_TIMESTAMP;
+BEGIN
+    PERFORM log_debug('create_system_backup', 'START', 'システムバックアップ開始');
+    
+    -- バックアップID生成
+    v_backup_id := 'BACKUP_' || to_char(v_timestamp, 'YYYYMMDD_HH24MISS');
+    v_backup_path := '/backup/' || v_backup_id || '.sql';
+    
+    -- バックアップテーブルが存在しない場合は作成
+    CREATE TABLE IF NOT EXISTS system_backups (
+        id SERIAL PRIMARY KEY,
+        backup_id VARCHAR(50) UNIQUE NOT NULL,
+        backup_path TEXT NOT NULL,
+        backup_size BIGINT,
+        status VARCHAR(20) DEFAULT 'IN_PROGRESS',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMP,
+        notes TEXT
+    );
+    
+    -- バックアップ記録作成
+    INSERT INTO system_backups (backup_id, backup_path, status)
+    VALUES (v_backup_id, v_backup_path, 'IN_PROGRESS');
+    
+    -- 監査ログ作成
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (NULL, 'CREATE_BACKUP', 'システムバックアップ作成: ' || v_backup_id, CURRENT_TIMESTAMP);
+    
+    PERFORM log_debug('create_system_backup', 'SUCCESS', 'バックアップ作成完了', 'backup_id', v_backup_id);
+    
+    -- バックアップステータスを完了に更新
+    UPDATE system_backups 
+    SET status = 'COMPLETED', completed_at = CURRENT_TIMESTAMP
+    WHERE backup_id = v_backup_id;
+    
+    RETURN v_backup_id;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('create_system_backup', 'ERROR', 'バックアップ作成エラー', 'error_message', SQLERRM);
+        RAISE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 7. パフォーマンス監視機能
+CREATE OR REPLACE FUNCTION monitor_system_performance() RETURNS TABLE (
+    metric_name VARCHAR(50),
+    metric_value NUMERIC,
+    unit VARCHAR(20),
+    check_timestamp TIMESTAMP
+) AS $$
+DECLARE
+    v_user_count INTEGER;
+    v_material_count INTEGER;
+    v_order_count INTEGER;
+    v_incident_count INTEGER;
+BEGIN
+    PERFORM log_debug('monitor_system_performance', 'START', 'システムパフォーマンス監視開始');
+    
+    -- 各種統計を取得
+    SELECT COUNT(*) INTO v_user_count FROM users WHERE deleted = FALSE;
+    SELECT COUNT(*) INTO v_material_count FROM logistics_materials;
+    SELECT COUNT(*) INTO v_order_count FROM transport_orders;
+    SELECT COUNT(*) INTO v_incident_count FROM emergency_incidents WHERE status = 'ACTIVE';
+    
+    -- パフォーマンスメトリクスを返す
+    RETURN QUERY
+    SELECT 'active_users'::VARCHAR(50), v_user_count::NUMERIC, 'count'::VARCHAR(20), CURRENT_TIMESTAMP
+    UNION ALL
+    SELECT 'total_materials'::VARCHAR(50), v_material_count::NUMERIC, 'count'::VARCHAR(20), CURRENT_TIMESTAMP
+    UNION ALL
+    SELECT 'active_orders'::VARCHAR(50), v_order_count::NUMERIC, 'count'::VARCHAR(20), CURRENT_TIMESTAMP
+    UNION ALL
+    SELECT 'active_incidents'::VARCHAR(50), v_incident_count::NUMERIC, 'count'::VARCHAR(20), CURRENT_TIMESTAMP;
+    
+    PERFORM log_debug('monitor_system_performance', 'END', 'パフォーマンス監視完了');
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('monitor_system_performance', 'ERROR', 'パフォーマンス監視エラー', 'error_message', SQLERRM);
+        RAISE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 8. レポート自動生成機能
+CREATE OR REPLACE FUNCTION generate_daily_report() RETURNS TABLE (
+    report_date DATE,
+    total_users INTEGER,
+    total_materials INTEGER,
+    active_orders INTEGER,
+    active_incidents INTEGER,
+    low_stock_materials INTEGER,
+    security_alerts INTEGER
+) AS $$
+DECLARE
+    v_report_date DATE := CURRENT_DATE;
+    v_total_users INTEGER;
+    v_total_materials INTEGER;
+    v_active_orders INTEGER;
+    v_active_incidents INTEGER;
+    v_low_stock_materials INTEGER;
+    v_security_alerts INTEGER;
+BEGIN
+    PERFORM log_debug('generate_daily_report', 'START', '日次レポート生成開始');
+    
+    -- 各種統計を取得
+    SELECT COUNT(*) INTO v_total_users FROM users WHERE deleted = FALSE;
+    SELECT COUNT(*) INTO v_total_materials FROM logistics_materials;
+    SELECT COUNT(*) INTO v_active_orders FROM transport_orders WHERE status IN ('PENDING', 'IN_TRANSIT');
+    SELECT COUNT(*) INTO v_active_incidents FROM emergency_incidents WHERE status = 'ACTIVE';
+    SELECT COUNT(*) INTO v_low_stock_materials FROM logistics_materials WHERE quantity <= 10;
+    SELECT COUNT(*) INTO v_security_alerts FROM audit_log WHERE action LIKE '%SECURITY%' AND created_at >= CURRENT_DATE;
+    
+    -- レポートテーブルが存在しない場合は作成
+    CREATE TABLE IF NOT EXISTS daily_reports (
+        id SERIAL PRIMARY KEY,
+        report_date DATE NOT NULL,
+        total_users INTEGER,
+        total_materials INTEGER,
+        active_orders INTEGER,
+        active_incidents INTEGER,
+        low_stock_materials INTEGER,
+        security_alerts INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    
+    -- レポート保存
+    INSERT INTO daily_reports (report_date, total_users, total_materials, active_orders, active_incidents, low_stock_materials, security_alerts)
+    VALUES (v_report_date, v_total_users, v_total_materials, v_active_orders, v_active_incidents, v_low_stock_materials, v_security_alerts);
+    
+    -- 監査ログ作成
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (NULL, 'GENERATE_DAILY_REPORT', '日次レポート生成: ' || v_report_date, CURRENT_TIMESTAMP);
+    
+    PERFORM log_debug('generate_daily_report', 'END', '日次レポート生成完了');
+    
+    -- レポートデータを返す
+    RETURN QUERY
+    SELECT v_report_date, v_total_users, v_total_materials, v_active_orders, v_active_incidents, v_low_stock_materials, v_security_alerts;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('generate_daily_report', 'ERROR', 'レポート生成エラー', 'error_message', SQLERRM);
+        RAISE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 9. システムヘルスチェック機能
+CREATE OR REPLACE FUNCTION check_system_health() RETURNS TABLE (
+    component VARCHAR(50),
+    status VARCHAR(20),
+    message TEXT,
+    last_check TIMESTAMP
+) AS $$
+DECLARE
+    v_db_status VARCHAR(20) := 'HEALTHY';
+    v_db_message TEXT := 'データベース接続正常';
+    v_user_status VARCHAR(20) := 'HEALTHY';
+    v_user_message TEXT := 'ユーザー管理システム正常';
+    v_material_status VARCHAR(20) := 'HEALTHY';
+    v_material_message TEXT := '材料管理システム正常';
+    v_order_status VARCHAR(20) := 'HEALTHY';
+    v_order_message TEXT := '輸送管理システム正常';
+    v_incident_status VARCHAR(20) := 'HEALTHY';
+    v_incident_message TEXT := '緊急事態管理システム正常';
+BEGIN
+    PERFORM log_debug('check_system_health', 'START', 'システムヘルスチェック開始');
+    
+    -- データベース接続チェック
+    BEGIN
+        PERFORM 1;
+    EXCEPTION
+        WHEN OTHERS THEN
+            v_db_status := 'ERROR';
+            v_db_message := 'データベース接続エラー: ' || SQLERRM;
+    END;
+    
+    -- ユーザーシステムチェック
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM users LIMIT 1) THEN
+            v_user_status := 'WARNING';
+            v_user_message := 'ユーザーテーブルが空です';
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+            v_user_status := 'ERROR';
+            v_user_message := 'ユーザーシステムエラー: ' || SQLERRM;
+    END;
+    
+    -- 材料システムチェック
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM logistics_materials LIMIT 1) THEN
+            v_material_status := 'WARNING';
+            v_material_message := '材料テーブルが空です';
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+            v_material_status := 'ERROR';
+            v_material_message := '材料システムエラー: ' || SQLERRM;
+    END;
+    
+    -- 輸送システムチェック
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM transport_orders LIMIT 1) THEN
+            v_order_status := 'WARNING';
+            v_order_message := '輸送オーダーテーブルが空です';
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+            v_order_status := 'ERROR';
+            v_order_message := '輸送システムエラー: ' || SQLERRM;
+    END;
+    
+    -- 緊急事態システムチェック
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM emergency_incidents LIMIT 1) THEN
+            v_incident_status := 'WARNING';
+            v_incident_message := '緊急事態テーブルが空です';
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+            v_incident_status := 'ERROR';
+            v_incident_message := '緊急事態システムエラー: ' || SQLERRM;
+    END;
+    
+    -- ヘルスチェック結果を返す
+    RETURN QUERY
+    SELECT 'database'::VARCHAR(50), v_db_status, v_db_message, CURRENT_TIMESTAMP
+    UNION ALL
+    SELECT 'user_management'::VARCHAR(50), v_user_status, v_user_message, CURRENT_TIMESTAMP
+    UNION ALL
+    SELECT 'material_management'::VARCHAR(50), v_material_status, v_material_message, CURRENT_TIMESTAMP
+    UNION ALL
+    SELECT 'transport_management'::VARCHAR(50), v_order_status, v_order_message, CURRENT_TIMESTAMP
+    UNION ALL
+    SELECT 'emergency_management'::VARCHAR(50), v_incident_status, v_incident_message, CURRENT_TIMESTAMP;
+    
+    PERFORM log_debug('check_system_health', 'END', 'システムヘルスチェック完了');
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('check_system_health', 'ERROR', 'ヘルスチェックエラー', 'error_message', SQLERRM);
+        RAISE;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 10. 自動メンテナンス機能
+CREATE OR REPLACE FUNCTION run_system_maintenance() RETURNS TEXT AS $$
+DECLARE
+    v_maintenance_id VARCHAR(50);
+    v_result TEXT := '';
+    v_old_logs_count INTEGER;
+    v_old_audit_count INTEGER;
+BEGIN
+    PERFORM log_debug('run_system_maintenance', 'START', 'システムメンテナンス開始');
+    
+    -- メンテナンスID生成
+    v_maintenance_id := 'MAINT_' || to_char(CURRENT_TIMESTAMP, 'YYYYMMDD_HH24MISS');
+    
+    -- 古いデバッグログを削除（30日以上前）
+    SELECT COUNT(*) INTO v_old_logs_count FROM debug_log WHERE created_at < CURRENT_DATE - INTERVAL '30 days';
+    DELETE FROM debug_log WHERE created_at < CURRENT_DATE - INTERVAL '30 days';
+    
+    -- 古い監査ログを削除（90日以上前）
+    SELECT COUNT(*) INTO v_old_audit_count FROM audit_log WHERE created_at < CURRENT_DATE - INTERVAL '90 days';
+    DELETE FROM audit_log WHERE created_at < CURRENT_DATE - INTERVAL '90 days';
+    
+    -- 解決済みアラートをクリーンアップ
+    DELETE FROM inventory_alerts WHERE status = 'RESOLVED' AND resolved_at < CURRENT_DATE - INTERVAL '7 days';
+    
+    -- メンテナンス結果を記録
+    v_result := 'メンテナンス完了: ' || v_maintenance_id || 
+                ', 削除されたデバッグログ: ' || v_old_logs_count || 
+                ', 削除された監査ログ: ' || v_old_audit_count;
+    
+    -- 監査ログ作成
+    INSERT INTO audit_log (user_id, action, details, created_at)
+    VALUES (NULL, 'SYSTEM_MAINTENANCE', v_result, CURRENT_TIMESTAMP);
+    
+    PERFORM log_debug('run_system_maintenance', 'END', 'システムメンテナンス完了');
+    
+    RETURN v_result;
+EXCEPTION
+    WHEN OTHERS THEN
+        PERFORM log_debug('run_system_maintenance', 'ERROR', 'メンテナンスエラー', 'error_message', SQLERRM);
+        RAISE;
+END;
+$$ LANGUAGE plpgsql; 

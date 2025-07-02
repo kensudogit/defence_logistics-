@@ -1,23 +1,10 @@
--- 防衛省ロジスティクス基盤テストスクリプト
--- Defense Logistics Infrastructure Test Script
-
-DO $$
-BEGIN
-    RAISE NOTICE '=== 防衛省ロジスティクス基盤テスト開始 ===';
-END $$;
+-- 防衛省ロジスティクス基盤テストスクリプト（エラー修正版）
+-- Defense Logistics Infrastructure Test Script (Fixed Version)
 
 -- 1. セキュリティレベル確認
-DO $$
-BEGIN
-    RAISE NOTICE '1. セキュリティレベル確認...';
-END $$;
 SELECT level_id, level_name, clearance_required, description FROM security_levels ORDER BY level_id;
 
 -- 2. 初期資材データ確認
-DO $$
-BEGIN
-    RAISE NOTICE '2. 初期資材データ確認...';
-END $$;
 SELECT 
     lm.material_code,
     lm.material_name,
@@ -31,10 +18,6 @@ JOIN security_levels sl ON lm.security_level_id = sl.level_id
 ORDER BY lm.material_code;
 
 -- 3. セキュリティ強化ユーザー作成テスト
-DO $$
-BEGIN
-    RAISE NOTICE '3. セキュリティ強化ユーザー作成テスト...';
-END $$;
 SELECT create_defense_user(
     'defense_admin',
     'admin@defense.gov.jp',
@@ -47,11 +30,6 @@ SELECT create_defense_user(
 ) as new_user_id;
 
 -- 4. 資材管理テスト
-DO $$
-BEGIN
-    RAISE NOTICE '4. 資材管理テスト...';
-END $$;
-
 -- 新規資材作成
 SELECT manage_logistics_material(
     'CREATE',
@@ -85,17 +63,9 @@ SELECT manage_logistics_material(
 ) as updated_material_id;
 
 -- 5. 在庫監視テスト
-DO $$
-BEGIN
-    RAISE NOTICE '5. 在庫監視テスト...';
-END $$;
 SELECT * FROM monitor_inventory_levels();
 
 -- 6. 輸送オーダー作成テスト
-DO $$
-BEGIN
-    RAISE NOTICE '6. 輸送オーダー作成テスト...';
-END $$;
 SELECT create_transportation_order(
     1, -- 最高優先度
     '東京基地',
@@ -109,10 +79,6 @@ SELECT create_transportation_order(
 ) as new_order_id;
 
 -- 7. 緊急事態報告テスト
-DO $$
-BEGIN
-    RAISE NOTICE '7. 緊急事態報告テスト...';
-END $$;
 SELECT report_emergency_incident(
     '燃料漏洩',
     4, -- 重大度レベル4
@@ -124,46 +90,25 @@ SELECT report_emergency_incident(
 ) as new_incident_id;
 
 -- 8. セキュリティ監査レポート生成テスト
-DO $$
-BEGIN
-    RAISE NOTICE '8. セキュリティ監査レポート生成テスト...';
-END $$;
 SELECT * FROM generate_security_audit_report(
-    CURRENT_DATE - INTERVAL '7 days',
-    CURRENT_DATE,
+    (CURRENT_DATE - INTERVAL '7 days')::DATE,
+    CURRENT_DATE::DATE,
     '極秘'
 );
 
 -- 9. 輸送効率分析テスト
-DO $$
-BEGIN
-    RAISE NOTICE '9. 輸送効率分析テスト...';
-END $$;
 SELECT * FROM analyze_transportation_efficiency(
-    CURRENT_DATE - INTERVAL '30 days',
-    CURRENT_DATE
+    (CURRENT_DATE - INTERVAL '30 days')::DATE,
+    CURRENT_DATE::DATE
 );
 
 -- 10. システムヘルスチェックテスト
-DO $$
-BEGIN
-    RAISE NOTICE '10. システムヘルスチェックテスト...';
-END $$;
 SELECT * FROM defense_system_health_check();
 
 -- 11. セキュアデータエクスポートテスト
-DO $$
-BEGIN
-    RAISE NOTICE '11. セキュアデータエクスポートテスト...';
-END $$;
 SELECT export_secure_data('logistics_materials', '一般', 1) as export_result;
 
 -- 12. 追加の輸送オーダー作成（効率分析用）
-DO $$
-BEGIN
-    RAISE NOTICE '12. 追加の輸送オーダー作成（効率分析用）...';
-END $$;
-
 -- 複数の輸送オーダーを作成
 SELECT create_transportation_order(
     2,
@@ -190,39 +135,26 @@ SELECT create_transportation_order(
 );
 
 -- 13. 緊急事態の解決テスト
-DO $$
-BEGIN
-    RAISE NOTICE '13. 緊急事態の解決テスト...';
-END $$;
 UPDATE emergency_incidents 
 SET status = 'resolved', 
     resolved_at = CURRENT_TIMESTAMP,
     resolution_notes = '燃料漏洩を修復し、安全確認完了'
 WHERE incident_type = '燃料漏洩';
 
--- 14. 輸送オーダー完了テスト
-DO $$
-BEGIN
-    RAISE NOTICE '14. 輸送オーダー完了テスト...';
-END $$;
+-- 14. 輸送オーダー完了テスト（サブクエリ対応）
 UPDATE transportation_orders 
 SET status = 'completed',
     updated_at = CURRENT_TIMESTAMP
-WHERE order_number LIKE 'TO-%' AND status = 'pending'
-LIMIT 1;
+WHERE id IN (
+    SELECT id FROM transportation_orders 
+    WHERE order_number LIKE 'TO-%' AND status = 'pending' 
+    LIMIT 1
+);
 
 -- 15. 最終システムヘルスチェック
-DO $$
-BEGIN
-    RAISE NOTICE '15. 最終システムヘルスチェック...';
-END $$;
 SELECT * FROM defense_system_health_check();
 
 -- 16. セキュリティ監査ログ確認
-DO $$
-BEGIN
-    RAISE NOTICE '16. セキュリティ監査ログ確認...';
-END $$;
 SELECT 
     action_type,
     table_name,
@@ -233,10 +165,6 @@ ORDER BY timestamp DESC
 LIMIT 10;
 
 -- 17. 緊急事態一覧確認
-DO $$
-BEGIN
-    RAISE NOTICE '17. 緊急事態一覧確認...';
-END $$;
 SELECT 
     incident_code,
     incident_type,
@@ -247,36 +175,24 @@ SELECT
 FROM emergency_incidents 
 ORDER BY reported_at DESC;
 
--- 18. 輸送オーダー一覧確認
-DO $$
-BEGIN
-    RAISE NOTICE '18. 輸送オーダー一覧確認...';
-END $$;
+-- 18. 輸送オーダー一覧確認（エイリアス名修正）
 SELECT 
-    to.order_number,
-    to.priority_level,
-    to.origin_location,
-    to.destination_location,
+    t_order.order_number,
+    t_order.priority_level,
+    t_order.origin_location,
+    t_order.destination_location,
     lm.material_name,
-    to.quantity,
-    to.status,
-    to.required_date
-FROM transportation_orders to
-JOIN logistics_materials lm ON to.material_id = lm.material_id
-ORDER BY to.created_at DESC;
+    t_order.quantity,
+    t_order.status,
+    t_order.required_date
+FROM transportation_orders t_order
+JOIN logistics_materials lm ON t_order.material_id = lm.material_id
+ORDER BY t_order.created_at DESC;
 
 -- 19. 自動メンテナンス実行テスト
-DO $$
-BEGIN
-    RAISE NOTICE '19. 自動メンテナンス実行テスト...';
-END $$;
 SELECT auto_maintenance_defense_system();
 
 -- 20. 最終確認
-DO $$
-BEGIN
-    RAISE NOTICE '20. 最終確認...';
-END $$;
 SELECT 
     'セキュリティレベル数' as item,
     COUNT(*)::text as count
@@ -300,10 +216,4 @@ UNION ALL
 SELECT 
     'セキュリティ監査ログ数',
     COUNT(*)::text
-FROM security_audit_logs;
-
-DO $$
-BEGIN
-    RAISE NOTICE '=== 防衛省ロジスティクス基盤テスト完了 ===';
-    RAISE NOTICE 'すべての機能が正常に動作していることを確認しました。';
-END $$; 
+FROM security_audit_logs; 

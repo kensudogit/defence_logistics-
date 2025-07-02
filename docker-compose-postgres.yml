@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  postgres_procedures:
+    image: postgres:15
+    container_name: postgres_procedures
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./defense_logistics_setup.sql:/tmp/defense_logistics_setup.sql
+      - ./defense_logistics_test.sql:/tmp/defense_logistics_test.sql
+      - ./defence_logistics/postgresql_procedures.sql:/tmp/postgresql_procedures.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data: 

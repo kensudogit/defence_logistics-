@@ -1,19 +1,7 @@
--- 防衛省ロジスティクス基盤セットアップスクリプト
--- Defense Logistics Infrastructure Setup Script
-
--- データベース接続確認
-DO $$
-BEGIN
-    RAISE NOTICE '=== 防衛省ロジスティクス基盤セットアップ開始 ===';
-END $$;
+-- 防衛省ロジスティクス基盤セットアップスクリプト（エラー修正版）
+-- Defense Logistics Infrastructure Setup Script (Fixed Version)
 
 -- 1. 基本テーブル作成
-DO $$
-BEGIN
-    RAISE NOTICE '1. 基本テーブル作成中...';
-END $$;
-
--- セキュリティレベル管理テーブル
 CREATE TABLE IF NOT EXISTS security_levels (
     level_id SERIAL PRIMARY KEY,
     level_name VARCHAR(50) NOT NULL UNIQUE,
@@ -23,7 +11,6 @@ CREATE TABLE IF NOT EXISTS security_levels (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- ロジスティクス資材管理テーブル
 CREATE TABLE IF NOT EXISTS logistics_materials (
     material_id SERIAL PRIMARY KEY,
     material_code VARCHAR(50) NOT NULL UNIQUE,
@@ -40,7 +27,6 @@ CREATE TABLE IF NOT EXISTS logistics_materials (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 輸送管理テーブル
 CREATE TABLE IF NOT EXISTS transportation_orders (
     order_id SERIAL PRIMARY KEY,
     order_number VARCHAR(50) NOT NULL UNIQUE,
@@ -59,7 +45,6 @@ CREATE TABLE IF NOT EXISTS transportation_orders (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- セキュリティ監査ログテーブル
 CREATE TABLE IF NOT EXISTS security_audit_logs (
     audit_id SERIAL PRIMARY KEY,
     user_id INTEGER,
@@ -75,7 +60,6 @@ CREATE TABLE IF NOT EXISTS security_audit_logs (
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 緊急事態管理テーブル
 CREATE TABLE IF NOT EXISTS emergency_incidents (
     incident_id SERIAL PRIMARY KEY,
     incident_code VARCHAR(50) NOT NULL UNIQUE,
@@ -92,17 +76,7 @@ CREATE TABLE IF NOT EXISTS emergency_incidents (
     resolution_notes TEXT
 );
 
-DO $$
-BEGIN
-    RAISE NOTICE '基本テーブル作成完了';
-END $$;
-
 -- 2. インデックス作成
-DO $$
-BEGIN
-    RAISE NOTICE '2. インデックス作成中...';
-END $$;
-
 CREATE INDEX IF NOT EXISTS idx_logistics_materials_code ON logistics_materials(material_code);
 CREATE INDEX IF NOT EXISTS idx_logistics_materials_category ON logistics_materials(category);
 CREATE INDEX IF NOT EXISTS idx_transportation_orders_status ON transportation_orders(status);
@@ -112,17 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_security_audit_logs_timestamp ON security_audit_l
 CREATE INDEX IF NOT EXISTS idx_emergency_incidents_status ON emergency_incidents(status);
 CREATE INDEX IF NOT EXISTS idx_emergency_incidents_severity ON emergency_incidents(severity_level);
 
-DO $$
-BEGIN
-    RAISE NOTICE 'インデックス作成完了';
-END $$;
-
 -- 3. 初期データ挿入
-DO $$
-BEGIN
-    RAISE NOTICE '3. 初期データ挿入中...';
-END $$;
-
 INSERT INTO security_levels (level_name, clearance_required, description) VALUES
 ('一般', '一般', '一般職員向け'),
 ('機密', '機密', '機密情報取扱者向け'),
@@ -138,17 +102,7 @@ INSERT INTO logistics_materials (material_code, material_name, category, unit, c
 ('MAT005', '武器部品', '武器', '個', 50, 10, 100, 4, 'LOC005', '武器部品会社E')
 ON CONFLICT (material_code) DO NOTHING;
 
-DO $$
-BEGIN
-    RAISE NOTICE '初期データ挿入完了';
-END $$;
-
 -- 4. セキュリティ強化ユーザー管理プロシージャー
-DO $$
-BEGIN
-    RAISE NOTICE '4. セキュリティ強化ユーザー管理プロシージャー作成中...';
-END $$;
-
 CREATE OR REPLACE FUNCTION create_defense_user(
     p_username VARCHAR(50),
     p_email VARCHAR(100),
@@ -161,19 +115,15 @@ CREATE OR REPLACE FUNCTION create_defense_user(
 ) RETURNS INTEGER AS $$
 DECLARE
     v_user_id INTEGER;
-    v_audit_id INTEGER;
 BEGIN
-    -- セキュリティクリアランスの検証
     IF p_security_clearance NOT IN ('一般', '機密', '極秘', '最重要機密') THEN
         RAISE EXCEPTION '無効なセキュリティクリアランス: %', p_security_clearance;
     END IF;
     
-    -- ユーザー作成（m_userテーブルを使用）
     INSERT INTO m_user (name, status, last_login_at)
     VALUES (p_username, 'active', CURRENT_TIMESTAMP)
     RETURNING id INTO v_user_id;
     
-    -- セキュリティ監査ログ記録
     INSERT INTO security_audit_logs (user_id, action_type, table_name, record_id, new_values, security_level)
     VALUES (p_created_by, 'CREATE_USER', 'm_user', v_user_id, 
             jsonb_build_object('username', p_username, 'security_clearance', p_security_clearance, 'rank', p_rank),
@@ -184,13 +134,8 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 5. ロジスティクス資材管理プロシージャー
-DO $$
-BEGIN
-    RAISE NOTICE '5. ロジスティクス資材管理プロシージャー作成中...';
-END $$;
-
 CREATE OR REPLACE FUNCTION manage_logistics_material(
-    p_action VARCHAR(20), -- 'CREATE', 'UPDATE', 'DELETE'
+    p_action VARCHAR(20),
     p_material_code VARCHAR(50),
     p_material_name VARCHAR(200),
     p_category VARCHAR(100),
@@ -208,7 +153,6 @@ DECLARE
     v_old_values JSONB;
     v_new_values JSONB;
 BEGIN
-    -- セキュリティレベル検証
     IF p_security_level NOT IN ('一般', '機密', '極秘', '最重要機密') THEN
         RAISE EXCEPTION '無効なセキュリティレベル: %', p_security_level;
     END IF;
@@ -237,7 +181,6 @@ BEGIN
                 RAISE EXCEPTION '資材が見つかりません: %', p_material_code;
             END IF;
             
-            -- 古い値を取得
             SELECT to_jsonb(lm.*) INTO v_old_values FROM logistics_materials lm WHERE lm.material_id = v_material_id;
             
             UPDATE logistics_materials SET
@@ -272,7 +215,6 @@ BEGIN
             RAISE EXCEPTION '無効なアクション: %', p_action;
     END CASE;
     
-    -- セキュリティ監査ログ記録
     INSERT INTO security_audit_logs (user_id, action_type, table_name, record_id, old_values, new_values, security_level)
     VALUES (p_user_id, p_action || '_MATERIAL', 'logistics_materials', v_material_id, v_old_values, v_new_values, p_security_level);
     
@@ -281,11 +223,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 6. 輸送オーダー管理プロシージャー
-DO $$
-BEGIN
-    RAISE NOTICE '6. 輸送オーダー管理プロシージャー作成中...';
-END $$;
-
 CREATE OR REPLACE FUNCTION create_transportation_order(
     p_priority_level INTEGER,
     p_origin_location VARCHAR(100),
@@ -302,7 +239,6 @@ DECLARE
     v_material_id INTEGER;
     v_security_level VARCHAR(50);
 BEGIN
-    -- 資材情報取得
     SELECT lm.material_id, sl.level_name INTO v_material_id, v_security_level
     FROM logistics_materials lm
     JOIN security_levels sl ON lm.security_level_id = sl.level_id
@@ -312,13 +248,11 @@ BEGIN
         RAISE EXCEPTION '資材が見つかりません: %', p_material_code;
     END IF;
     
-    -- 在庫確認
     IF (SELECT current_stock FROM logistics_materials WHERE material_id = v_material_id) < p_quantity THEN
         RAISE EXCEPTION '在庫不足: 要求数量 % に対して在庫 %', 
             p_quantity, (SELECT current_stock FROM logistics_materials WHERE material_id = v_material_id);
     END IF;
     
-    -- 輸送オーダー作成
     INSERT INTO transportation_orders (
         order_number, priority_level, origin_location, destination_location,
         material_id, quantity, required_date, assigned_vehicle, assigned_driver,
@@ -332,13 +266,11 @@ BEGIN
     )
     RETURNING order_id INTO v_order_id;
     
-    -- 在庫更新
     UPDATE logistics_materials 
     SET current_stock = current_stock - p_quantity,
         last_updated = CURRENT_TIMESTAMP
     WHERE material_id = v_material_id;
     
-    -- セキュリティ監査ログ記録
     INSERT INTO security_audit_logs (user_id, action_type, table_name, record_id, new_values, security_level)
     VALUES (p_created_by, 'CREATE_TRANSPORT_ORDER', 'transportation_orders', v_order_id,
             jsonb_build_object('order_number', 'TO-' || to_char(CURRENT_TIMESTAMP, 'YYYYMMDD') || '-' || v_order_id,
@@ -350,11 +282,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 7. 緊急事態管理プロシージャー
-DO $$
-BEGIN
-    RAISE NOTICE '7. 緊急事態管理プロシージャー作成中...';
-END $$;
-
 CREATE OR REPLACE FUNCTION report_emergency_incident(
     p_incident_type VARCHAR(100),
     p_severity_level INTEGER,
@@ -368,15 +295,12 @@ DECLARE
     v_incident_id INTEGER;
     v_incident_code VARCHAR(50);
 BEGIN
-    -- 重大度レベルの検証
     IF p_severity_level NOT BETWEEN 1 AND 5 THEN
         RAISE EXCEPTION '無効な重大度レベル: % (1-5の範囲で指定してください)', p_severity_level;
     END IF;
     
-    -- インシデントコード生成
     v_incident_code := 'EI-' || to_char(CURRENT_TIMESTAMP, 'YYYYMMDD-HH24MISS');
     
-    -- 緊急事態記録
     INSERT INTO emergency_incidents (
         incident_code, incident_type, severity_level, location, description,
         affected_materials, response_team, reported_by
@@ -387,13 +311,11 @@ BEGIN
     )
     RETURNING incident_id INTO v_incident_id;
     
-    -- セキュリティ監査ログ記録
     INSERT INTO security_audit_logs (user_id, action_type, table_name, record_id, new_values, security_level)
     VALUES (p_reported_by, 'REPORT_EMERGENCY', 'emergency_incidents', v_incident_id,
             jsonb_build_object('incident_code', v_incident_code, 'severity_level', p_severity_level),
             '極秘');
     
-    -- 重大度レベル4-5の場合は自動的にアラートを発行
     IF p_severity_level >= 4 THEN
         PERFORM send_emergency_alert(v_incident_id, p_severity_level, p_location);
     END IF;
@@ -409,8 +331,6 @@ CREATE OR REPLACE FUNCTION send_emergency_alert(
     p_location VARCHAR(200)
 ) RETURNS VOID AS $$
 BEGIN
-    -- 実際の実装では、メール送信、SMS送信、システム通知などを実行
-    -- ここではログに記録するのみ
     INSERT INTO security_audit_logs (user_id, action_type, table_name, record_id, new_values, security_level)
     VALUES (1, 'EMERGENCY_ALERT', 'emergency_incidents', p_incident_id,
             jsonb_build_object('severity_level', p_severity_level, 'location', p_location),
@@ -422,11 +342,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 9. 在庫監視プロシージャー
-DO $$
-BEGIN
-    RAISE NOTICE '9. 在庫監視プロシージャー作成中...';
-END $$;
-
 CREATE OR REPLACE FUNCTION monitor_inventory_levels() RETURNS TABLE(
     material_code VARCHAR(50),
     material_name VARCHAR(200),
@@ -445,9 +360,9 @@ BEGIN
         lm.min_stock_level,
         lm.max_stock_level,
         CASE 
-            WHEN lm.current_stock <= lm.min_stock_level THEN '在庫不足'
-            WHEN lm.current_stock >= lm.max_stock_level THEN '在庫過多'
-            ELSE '正常'
+            WHEN lm.current_stock <= lm.min_stock_level THEN '在庫不足'::VARCHAR(20)
+            WHEN lm.current_stock >= lm.max_stock_level THEN '在庫過多'::VARCHAR(20)
+            ELSE '正常'::VARCHAR(20)
         END as stock_status,
         sl.level_name as security_level
     FROM logistics_materials lm
@@ -463,11 +378,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 10. セキュリティ監査レポート生成プロシージャー
-DO $$
-BEGIN
-    RAISE NOTICE '10. セキュリティ監査レポート生成プロシージャー作成中...';
-END $$;
-
 CREATE OR REPLACE FUNCTION generate_security_audit_report(
     p_start_date DATE DEFAULT CURRENT_DATE - INTERVAL '30 days',
     p_end_date DATE DEFAULT CURRENT_DATE,
@@ -499,11 +409,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 11. 輸送効率分析プロシージャー（エイリアス名修正）
-DO $$
-BEGIN
-    RAISE NOTICE '11. 輸送効率分析プロシージャー作成中...';
-END $$;
-
 CREATE OR REPLACE FUNCTION analyze_transportation_efficiency(
     p_start_date DATE DEFAULT CURRENT_DATE - INTERVAL '30 days',
     p_end_date DATE DEFAULT CURRENT_DATE
@@ -532,11 +437,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 12. システムヘルスチェック（カラム名明示）
-DO $$
-BEGIN
-    RAISE NOTICE '12. システムヘルスチェックプロシージャー作成中...';
-END $$;
-
 CREATE OR REPLACE FUNCTION defense_system_health_check() RETURNS TABLE(
     check_item VARCHAR(100),
     status VARCHAR(20),
@@ -549,7 +449,6 @@ DECLARE
     v_active_incidents_count INTEGER;
     v_recent_audit_count INTEGER;
 BEGIN
-    -- 在庫不足チェック
     SELECT COUNT(*) INTO v_low_stock_count
     FROM logistics_materials 
     WHERE current_stock <= min_stock_level;
@@ -562,7 +461,6 @@ BEGIN
             '中'::VARCHAR(20);
     END IF;
     
-    -- 未処理輸送オーダーチェック
     SELECT COUNT(*) INTO v_pending_orders_count
     FROM transportation_orders 
     WHERE transportation_orders.status = 'pending' AND required_date < CURRENT_DATE;
@@ -575,7 +473,6 @@ BEGIN
             '高'::VARCHAR(20);
     END IF;
     
-    -- アクティブな緊急事態チェック
     SELECT COUNT(*) INTO v_active_incidents_count
     FROM emergency_incidents 
     WHERE emergency_incidents.status = 'active' AND severity_level >= 4;
@@ -588,7 +485,6 @@ BEGIN
             '最高'::VARCHAR(20);
     END IF;
     
-    -- セキュリティ監査ログチェック
     SELECT COUNT(*) INTO v_recent_audit_count
     FROM security_audit_logs 
     WHERE timestamp > CURRENT_TIMESTAMP - INTERVAL '1 hour';
@@ -601,7 +497,6 @@ BEGIN
             '中'::VARCHAR(20);
     END IF;
     
-    -- システム正常
     RETURN QUERY SELECT 
         'システム全体'::VARCHAR(100),
         '正常'::VARCHAR(20),
@@ -611,11 +506,6 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 13. データエクスポート機能（エイリアス名修正）
-DO $$
-BEGIN
-    RAISE NOTICE '13. データエクスポート機能作成中...';
-END $$;
-
 CREATE OR REPLACE FUNCTION export_secure_data(
     p_data_type VARCHAR(50),
     p_security_level VARCHAR(50),
@@ -625,7 +515,6 @@ DECLARE
     v_export_data TEXT;
     v_filename VARCHAR(100);
 BEGIN
-    -- セキュリティレベル検証
     IF p_security_level NOT IN ('一般', '機密', '極秘', '最重要機密') THEN
         RAISE EXCEPTION '無効なセキュリティレベル: %', p_security_level;
     END IF;
@@ -661,7 +550,6 @@ BEGIN
             RAISE EXCEPTION '無効なデータタイプ: %', p_data_type;
     END CASE;
     
-    -- エクスポートログ記録
     INSERT INTO security_audit_logs (user_id, action_type, table_name, new_values, security_level)
     VALUES (p_user_id, 'EXPORT_DATA', p_data_type, 
             jsonb_build_object('data_type', p_data_type, 'security_level', p_security_level),
@@ -674,29 +562,21 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 14. 自動メンテナンスプロシージャー
-DO $$
-BEGIN
-    RAISE NOTICE '14. 自動メンテナンスプロシージャー作成中...';
-END $$;
-
 CREATE OR REPLACE FUNCTION auto_maintenance_defense_system() RETURNS VOID AS $$
 DECLARE
     v_old_records_count INTEGER;
     v_cleaned_records_count INTEGER;
 BEGIN
-    -- 古いセキュリティ監査ログのクリーンアップ（1年以上前）
     DELETE FROM security_audit_logs 
     WHERE timestamp < CURRENT_TIMESTAMP - INTERVAL '1 year';
     
     GET DIAGNOSTICS v_cleaned_records_count = ROW_COUNT;
     
-    -- 解決済み緊急事態のアーカイブ（30日以上前）
     UPDATE emergency_incidents 
     SET status = 'archived'
     WHERE status = 'resolved' 
     AND resolved_at < CURRENT_TIMESTAMP - INTERVAL '30 days';
     
-    -- 統計情報記録
     INSERT INTO security_audit_logs (user_id, action_type, table_name, new_values, security_level)
     VALUES (1, 'AUTO_MAINTENANCE', 'system', 
             jsonb_build_object('cleaned_audit_logs', v_cleaned_records_count),
@@ -704,21 +584,4 @@ BEGIN
     
     RAISE NOTICE '自動メンテナンス完了: %件の古い監査ログを削除しました', v_cleaned_records_count;
 END;
-$$ LANGUAGE plpgsql;
-
--- セットアップ完了メッセージ
-DO $$
-BEGIN
-    RAISE NOTICE '=== 防衛省ロジスティクス基盤セットアップ完了 ===';
-    RAISE NOTICE '作成された機能:';
-    RAISE NOTICE '- セキュリティレベル管理';
-    RAISE NOTICE '- ロジスティクス資材管理';
-    RAISE NOTICE '- 輸送オーダー管理';
-    RAISE NOTICE '- 緊急事態管理';
-    RAISE NOTICE '- セキュリティ監査';
-    RAISE NOTICE '- 在庫監視';
-    RAISE NOTICE '- 輸送効率分析';
-    RAISE NOTICE '- システムヘルスチェック';
-    RAISE NOTICE '- セキュアデータエクスポート';
-    RAISE NOTICE '- 自動メンテナンス';
-END $$; 
+$$ LANGUAGE plpgsql; 
