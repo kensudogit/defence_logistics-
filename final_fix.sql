@@ -53,7 +53,7 @@ CREATE OR REPLACE FUNCTION create_transport_order_with_debug(
     p_destination_location VARCHAR(100),
     p_priority VARCHAR(20),
     p_security_level INTEGER,
-    p_expected_delivery_date DATE
+    p_estimated_delivery_date DATE
 ) RETURNS INTEGER AS $$
 DECLARE
     v_order_id INTEGER;
@@ -80,7 +80,7 @@ BEGIN
         destination_location,
         priority,
         security_level,
-        expected_delivery_date,
+        estimated_delivery_date,
         status,
         created_at
     ) VALUES (
@@ -89,7 +89,7 @@ BEGIN
         p_destination_location,
         p_priority,
         p_security_level,
-        p_expected_delivery_date,
+        p_estimated_delivery_date,
         'PENDING',
         CURRENT_TIMESTAMP
     ) RETURNING id INTO v_order_id;
